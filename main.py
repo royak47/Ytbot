@@ -141,28 +141,30 @@ async def direct_download(update: Update, url: str):
         os.remove(filename)
 
 # 🔥 Terabox handler using teradownloader.com
-async def handle_terabox(update: Update, url: str):
-    api_url = "https://teradownloader.com/api/grab"
+import requests
+
+def get_terabox_link(share_url):
     try:
-        res = requests.get(api_url, params={"link": url}, headers={"User-Agent": "Mozilla/5.0"})
-        data = res.json()
+        response = requests.get(
+            "https://teradownloader.com/download",
+            params={"w": "0", "link": share_url},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://teradownloader.com/",
+            },
+            timeout=10
+        )
 
-        if data.get("code") != 200 or not data.get("data"):
-            await update.message.reply_text("❌ Failed to fetch file info from Terabox.")
-            return
+        if response.status_code != 200:
+            return f"❌ Terabox error: Status {response.status_code}"
 
-        files = data["data"].get("files") or data["data"].get("list")
-        for file in files:
-            name = file.get("filename")
-            dlink = file.get("dlink")
-            size = file.get("size")
-
-            msg = f"📁 <b>{name}</b>\n📦 Size: {size}\n🔗 <a href='{dlink}'>Direct Download</a>"
-            await update.message.reply_html(msg, disable_web_page_preview=True)
+        data = response.json()
+        return data  # ya phir data["download_url"] if present
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Terabox error: {e}")
-
+        return f"❌ Terabox error: {str(e)}"
+        
 # Run the bot
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
