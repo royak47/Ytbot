@@ -119,7 +119,7 @@ async def download_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(filename)
 
 # 🔐 Replace this with your bot token
-BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98"
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
