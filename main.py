@@ -55,7 +55,7 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     os.remove(filename)
 
-app = ApplicationBuilder().token("YOUR_BOT_TOKEN").build()
+app = ApplicationBuilder().token("7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98").build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
