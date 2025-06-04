@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: telegram-video-downloader
+    runtime: python
+    buildCommand: ""
+    startCommand: python main.py
+    envVars:
+      - fromDotEnv: true
+    plan: free
