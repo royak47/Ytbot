@@ -143,29 +143,6 @@ async def download_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ Upload failed. File may be too large.")
         os.remove(filename)
 
-async def direct_download(update: Update, url: str):
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
-
-    filename = os.path.join(DOWNLOAD_DIR, f"{update.effective_user.id}.mp4")
-    opts = {
-        'quiet': True,
-        'outtmpl': filename,
-        'format': 'bestvideo+bestaudio/best',
-        'merge_output_format': 'mp4',
-        'cookiefile': 'cookies.txt'
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
-        with open(filename, 'rb') as f:
-            await update.message.reply_video(f)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Download failed: {e}")
-    if os.path.exists(filename):
-        os.remove(filename)
-
 # Run the bot
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
