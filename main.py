@@ -49,12 +49,23 @@ async def list_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     buttons.append((abr, InlineKeyboardButton(label, callback_data=f"download:{fid}")))
 
             elif format_type == "video":
-                if vcodec != "none" and height and ext in ["mp4", "webm"]:
-                    label = f"{height}p"
-                    if fps:
-                        label += f" {int(fps)}fps"
-                    buttons.append((height, InlineKeyboardButton(label, callback_data=f"download:{fid}")))
+        seen_resolutions = set()
+        for f in formats:
+            fid = f.get("format_id")
+            ext = f.get("ext", "")
+            vcodec = f.get("vcodec")
+            height = f.get("height", 0)
+            fps = f.get("fps", 0)
 
+            if vcodec != "none" and height and ext in ["mp4", "webm"]:
+                if height in seen_resolutions:
+                    continue  # Skip duplicate resolution
+                seen_resolutions.add(height)
+
+                label = f"{height}p"
+                if fps:
+                    label += f" {int(fps)}fps"
+                buttons.append((height, InlineKeyboardButton(label, callback_data=f"download:{fid}")))
         if not buttons:
             await query.edit_message_text("❌ No matching formats found.")
             return
