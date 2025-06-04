@@ -1,5 +1,4 @@
 import os
-import requests
 import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -11,19 +10,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DOWNLOAD_DIR = "downloads"
 YOUTUBE_SITES = ['youtube.com', 'youtu.be']
 
-# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📥 Send any video link from YouTube, Instagram, Twitter (X), or Terabox.")
 
-# Handle message
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     context.user_data['url'] = url
 
-    if "terabox" in url or "teraboxshare.com" in url or "terabox.app" in url:
-        await update.message.reply_text("🔍 Processing Terabox link...")
-        await handle_terabox(update, url)
-    elif any(site in url for site in YOUTUBE_SITES):
+    if any(site in url for site in YOUTUBE_SITES):
         await update.message.reply_text(
             "🔍 Getting YouTube formats...",
             reply_markup=InlineKeyboardMarkup([
@@ -34,11 +28,11 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⏬ Downloading... Please wait.")
         await direct_download(update, url)
 
-# Fetch YouTube formats
 async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     url = context.user_data.get("url")
+
     await query.edit_message_text("🔍 Fetching YouTube formats...")
 
     try:
@@ -72,7 +66,6 @@ async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await query.edit_message_text(f"❌ Error: {str(e)}")
 
-# Download selected YouTube format
 async def download_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -117,7 +110,6 @@ async def download_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ Upload failed. File may be too large.")
         os.remove(filename)
 
-# Direct download for non-YouTube
 async def direct_download(update: Update, url: str):
     if not os.path.exists(DOWNLOAD_DIR):
         os.makedirs(DOWNLOAD_DIR)
@@ -140,31 +132,6 @@ async def direct_download(update: Update, url: str):
     if os.path.exists(filename):
         os.remove(filename)
 
-# 🔥 Terabox handler using teradownloader.com
-import requests
-
-def get_terabox_link(share_url):
-    try:
-        response = requests.get(
-            "https://teradownloader.com/download",
-            params={"w": "0", "link": share_url},
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-                "Accept": "application/json, text/plain, */*",
-                "Referer": "https://teradownloader.com/",
-            },
-            timeout=10
-        )
-
-        if response.status_code != 200:
-            return f"❌ Terabox error: Status {response.status_code}"
-
-        data = response.json()
-        return data  # ya phir data["download_url"] if present
-
-    except Exception as e:
-        return f"❌ Terabox error: {str(e)}"
-        
 # Run the bot
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
