@@ -15,6 +15,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
+    if not url.startswith("http"):
+        await update.message.reply_text("❌ Please send a valid URL.")
+        return
+
     context.user_data['url'] = url
 
     if any(site in url for site in YOUTUBE_SITES):
@@ -31,7 +35,12 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     url = context.user_data.get("url")
+
+    if not url:
+        await query.edit_message_text("❌ Error: No URL found. Please send a valid YouTube link again.")
+        return
 
     await query.edit_message_text("🔍 Fetching YouTube formats...")
 
@@ -39,7 +48,7 @@ async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYP
         ydl_opts = {
             'quiet': True,
             'skip_download': True,
-            'cookiefile': 'cookies.txt',  # Ensure this file is in the same directory
+            'cookiefile': 'cookies.txt',
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -56,7 +65,6 @@ async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYP
             acodec = f.get("acodec")
             filesize = f.get("filesize") or 0
 
-            # Include only video+audio formats (no audio-only or video-only)
             if height and acodec != "none" and ext in ["mp4", "webm"]:
                 label = f"{height}p ({round(filesize / 1024 / 1024)} MB)" if filesize else f"{height}p"
                 if label not in seen:
