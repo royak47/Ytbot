@@ -36,13 +36,19 @@ async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text("🔍 Fetching YouTube formats...")
 
     try:
-        ydl_opts = {'quiet': True, 'skip_download': True}
+        ydl_opts = {
+            'quiet': True,
+            'skip_download': True,
+            'cookiefile': 'cookies.txt',  # Ensure this file is in the same directory
+        }
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             formats = info.get("formats", [])
 
         buttons = []
         seen = set()
+
         for f in formats:
             fid = f.get("format_id")
             height = f.get("height")
@@ -50,6 +56,7 @@ async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYP
             acodec = f.get("acodec")
             filesize = f.get("filesize") or 0
 
+            # Include only video+audio formats (no audio-only or video-only)
             if height and acodec != "none" and ext in ["mp4", "webm"]:
                 label = f"{height}p ({round(filesize / 1024 / 1024)} MB)" if filesize else f"{height}p"
                 if label not in seen:
@@ -64,7 +71,32 @@ async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("🎯 Choose quality:", reply_markup=InlineKeyboardMarkup(buttons))
 
     except Exception as e:
-        await query.edit_message_text(f"❌ Error: {str(e)}")
+        await query.edit_message_text(f"❌ Error: {str(e)}"))
+        
+async def handle_format_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    url = context.user_data.get("url")
+    selected_format_id = query.data.split(":")[1]
+
+    await query.edit_message_text("⏬ Downloading selected format...")
+
+    try:
+        ydl_opts = {
+            'format': selected_format_id,
+            'outtmpl': 'downloads/%(title)s.%(ext)s',
+            'cookiefile': 'cookies.txt',
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            result = ydl.download([url])
+
+        await query.edit_message_text("✅ Download complete!")
+        # Or optionally send file here if size is small
+
+    except Exception as e:
+        await query.edit_message_text(f"❌ Download failed: {str(e)}")
 
 async def download_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
