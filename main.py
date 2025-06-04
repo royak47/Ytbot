@@ -91,7 +91,8 @@ async def download_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ydl_opts = {
             'quiet': True,
             'outtmpl': filename,
-            'format': fid
+            'format': fid,
+            'cookiefile': 'cookies.txt'
         }
 
         await query.edit_message_text("⏬ Downloading...")
