@@ -1,60 +1,160 @@
-import logging
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-import subprocess
 import os
+import yt_dlp
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (ApplicationBuilder, CommandHandler, MessageHandler,
+                          CallbackQueryHandler, ContextTypes, filters)
 
-# Logging setup
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+BOT_TOKEN = "7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98"
+DOWNLOAD_DIR = "downloads"
 
-# Your Telegram Bot Token
-TOKEN = "7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98"
+SUPPORTED_SITES = ['youtube.com', 'youtu.be']
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("Hello! Send me any YouTube, Instagram, or Twitter link to download media.")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📥 Send any video link from YouTube, Instagram, Twitter or Terabox.")
 
-def clean_url(url):
-    # Remove URL parameters & fix X.com -> twitter.com
-    if "x.com" in url:
-        url = url.replace("x.com", "twitter.com")
-    if "?" in url:
-        url = url.split("?")[0]
-    return url
-
-def download_media(url):
-    filename = "media.%(ext)s"
-    try:
-        # Run yt-dlp subprocess
-        subprocess.run(["yt-dlp", "-o", filename, clean_url(url)], check=True)
-        # Find downloaded file
-        for file in os.listdir("."):
-            if file.startswith("media."):
-                return file
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Download error: {e}")
-        return None
-
-def handle_message(update: Update, context: CallbackContext):
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    update.message.reply_text("Downloading, please wait...")
+    context.user_data['url'] = url
 
-    file_path = download_media(url)
-    if file_path and os.path.exists(file_path):
-        update.message.reply_document(document=open(file_path, 'rb'))
-        os.remove(file_path)
+    if any(site in url for site in SUPPORTED_SITES):
+        buttons = [[
+            InlineKeyboardButton("🎵 Audio", callback_data="audio"),
+            InlineKeyboardButton("🎬 Video", callback_data="video")
+        ]]
+        await update.message.reply_text("Choose format:", reply_markup=InlineKeyboardMarkup(buttons))
     else:
-        update.message.reply_text("❌ Sorry, failed to download from the provided link.")
+        await update.message.reply_text("⏬ Downloading... Please wait.")
+        await direct_download(update, url)
 
-def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+async def list_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    url = context.user_data.get("url")
+    format_type = query.data
+    context.user_data['type'] = format_type
 
-    updater.start_polling()
-    updater.idle()
+    await query.edit_message_text("🔍 Fetching available formats...")
 
-if __name__ == '__main__':
-    main()
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True, 'skip_download': True}) as ydl:
+            info = ydl.extract_info(url, download=False)
+            formats = info.get("formats", [])
+
+        buttons = []
+        seen = set()
+
+        for f in formats:
+            fid = f.get("format_id")
+            ext = f.get("ext", "")
+            height = f.get("height", 0)
+            abr = f.get("abr", 0)
+            vcodec = f.get("vcodec")
+
+            if format_type == "audio" and vcodec == "none" and abr and abr >= 128:
+                label = f"{int(abr)}kbps"
+                if label not in seen:
+                    seen.add(label)
+                    buttons.append([InlineKeyboardButton(label, callback_data=f"download:{fid}")])
+
+            elif format_type == "video" and vcodec != "none" and height and ext in ["mp4", "webm"]:
+                if height not in seen:
+                    seen.add(height)
+                    label = f"{height}p"
+                    buttons.append([InlineKeyboardButton(label, callback_data=f"download:{fid}")])
+
+        if not buttons:
+            await query.edit_message_text("❌ No formats found.")
+            return
+
+        buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
+        await query.edit_message_text("🎯 Choose quality:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    except Exception as e:
+        await query.edit_message_text("❌ Error fetching formats.")
+
+async def download_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if data == "back":
+        buttons = [[
+            InlineKeyboardButton("🎵 Audio", callback_data="audio"),
+            InlineKeyboardButton("🎬 Video", callback_data="video")
+        ]]
+        await query.edit_message_text("Choose format:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    fid = data.split(":")[1]
+    url = context.user_data.get("url")
+    format_type = context.user_data.get("type")
+
+    await query.edit_message_text("⏬ Downloading selected format...")
+
+    if not os.path.exists(DOWNLOAD_DIR):
+        os.makedirs(DOWNLOAD_DIR)
+
+    filename = os.path.join(DOWNLOAD_DIR, f"{query.from_user.id}.{fid}.{ 'mp3' if format_type == 'audio' else 'mp4'}")
+
+    ydl_opts = {
+        'quiet': True,
+        'outtmpl': filename,
+        'format': f"{fid}+bestaudio/best" if format_type == "video" else fid,
+        'merge_output_format': 'mp4' if format_type == 'video' else 'mp3',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }] if format_type == 'audio' else [],
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception:
+        await query.edit_message_text("❌ Download failed. Try another format.")
+        return
+
+    await query.edit_message_text("📤 Uploading...")
+
+    try:
+        with open(filename, 'rb') as f:
+            if format_type == "audio":
+                await query.message.reply_audio(f)
+            else:
+                await query.message.reply_video(f)
+    except:
+        await query.message.reply_text("❌ Upload failed. File too large?")
+
+    os.remove(filename)
+
+async def direct_download(update: Update, url: str):
+    if not os.path.exists(DOWNLOAD_DIR):
+        os.makedirs(DOWNLOAD_DIR)
+    filename = os.path.join(DOWNLOAD_DIR, f"{update.effective_user.id}.mp4")
+
+    opts = {
+        'quiet': True,
+        'outtmpl': filename,
+        'format': 'bestvideo+bestaudio/best',
+        'merge_output_format': 'mp4'
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+        with open(filename, 'rb') as f:
+            await update.message.reply_video(f)
+    except Exception:
+        await update.message.reply_text("❌ Download failed.")
+    if os.path.exists(filename):
+        os.remove(filename)
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+app.add_handler(CallbackQueryHandler(list_formats, pattern="^(audio|video)$"))
+app.add_handler(CallbackQueryHandler(download_format, pattern="^(download:|back)$"))
+
+print("✅ Bot is running...")
+app.run_polling()
