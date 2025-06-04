@@ -1,109 +1,93 @@
 import os
 import requests
-import telebot
 from pytube import YouTube
+import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# 🔐 Replace this with your bot token
 BOT_TOKEN = "7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98"
-
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ▶️ YOUTUBE: Send video qualities as buttons
+# 📥 YouTube Quality Selection
 def send_youtube_qualities(chat_id, video_url):
-    yt = YouTube(video_url)
-    streams = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc()
-
-    markup = InlineKeyboardMarkup()
-    for stream in streams:
-        size = round(stream.filesize / (1024 * 1024), 1)
-        text = f"{stream.resolution} ({size} MB)"
-        callback_data = f"yt_quality|{video_url}|{stream.itag}"
-        markup.add(InlineKeyboardButton(text, callback_data=callback_data))
-
-    bot.send_message(chat_id, "🎥 Select video quality to download:", reply_markup=markup)
-
-# ▶️ YOUTUBE: Download selected quality
-@bot.callback_query_handler(func=lambda call: call.data.startswith("yt_quality|"))
-def handle_youtube_quality(call):
     try:
-        _, url, itag = call.data.split("|")
+        yt = YouTube(video_url)
+        streams = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc()
+
+        markup = InlineKeyboardMarkup()
+        for stream in streams:
+            size_mb = round(stream.filesize / (1024 * 1024), 1)
+            btn_text = f"{stream.resolution} ({size_mb} MB)"
+            callback_data = f"yt|{stream.itag}|{video_url}"
+            markup.add(InlineKeyboardButton(btn_text, callback_data=callback_data))
+
+        bot.send_message(chat_id, "🎞 Select a video quality:", reply_markup=markup)
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ Error: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("yt|"))
+def download_selected_quality(call):
+    try:
+        _, itag, url = call.data.split("|")
         yt = YouTube(url)
         stream = yt.streams.get_by_itag(itag)
 
-        msg = bot.send_message(call.message.chat.id, "📥 Downloading...")
+        msg = bot.send_message(call.message.chat.id, "📥 Downloading video...")
         file_path = stream.download()
 
         bot.send_chat_action(call.message.chat.id, 'upload_video')
-        with open(file_path, 'rb') as video:
-            bot.send_video(call.message.chat.id, video, supports_streaming=True)
-
+        with open(file_path, 'rb') as vid:
+            bot.send_video(call.message.chat.id, vid, supports_streaming=True)
         os.remove(file_path)
     except Exception as e:
-        bot.send_message(call.message.chat.id, f"❌ Download failed:\n`{e}`", parse_mode="Markdown")
+        bot.send_message(call.message.chat.id, f"❌ Download failed: {e}")
 
-# 📁 TERABOX: Get direct download link from unofficial API
+# 📦 Terabox Handler
 def get_terabox_direct_link(shared_url):
     try:
-        api_url = "https://api.tbxdrive.net/api/download"
-        params = {"url": shared_url}
-        res = requests.get(api_url, params=params)
-        data = res.json()
-        if data.get("success") and data.get("download_url"):
-            return data["download_url"]
-        return None
+        r = requests.get("https://api.tbxdrive.net/api/download", params={"url": shared_url})
+        j = r.json()
+        return j["download_url"] if j.get("success") else None
     except:
         return None
 
-# 📥 TERABOX: Handle download
-@bot.message_handler(func=lambda message: "terabox.app" in message.text)
-def handle_terabox(message):
-    link = message.text.strip()
-    bot.send_message(message.chat.id, "🔍 Extracting Terabox file...")
-
-    direct_link = get_terabox_direct_link(link)
-    if not direct_link:
-        bot.send_message(message.chat.id, "❌ Failed to extract Terabox file. Link might be unsupported.")
+@bot.message_handler(func=lambda m: "terabox.app" in m.text)
+def handle_terabox(m):
+    bot.send_message(m.chat.id, "🔍 Extracting Terabox file...")
+    link = get_terabox_direct_link(m.text.strip())
+    if not link:
+        bot.send_message(m.chat.id, "❌ Terabox link not supported or failed to fetch.")
         return
-
     try:
-        file_data = requests.get(direct_link, stream=True)
-        filename = direct_link.split("/")[-1].split("?")[0]
-        with open(filename, 'wb') as f:
-            for chunk in file_data.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-
-        bot.send_chat_action(message.chat.id, 'upload_document')
-        with open(filename, 'rb') as doc:
-            bot.send_document(message.chat.id, doc)
-
+        filename = link.split("/")[-1].split("?")[0]
+        r = requests.get(link, stream=True)
+        with open(filename, "wb") as f:
+            for chunk in r.iter_content(1024 * 1024):
+                f.write(chunk)
+        bot.send_chat_action(m.chat.id, 'upload_document')
+        with open(filename, "rb") as doc:
+            bot.send_document(m.chat.id, doc)
         os.remove(filename)
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Download error:\n`{e}`", parse_mode="Markdown")
+        bot.send_message(m.chat.id, f"❌ Failed: {e}")
 
-# 🔗 YOUTUBE: Detect YouTube URL and show quality options
-@bot.message_handler(func=lambda message: "youtube.com/watch" in message.text or "youtu.be/" in message.text)
-def handle_youtube(message):
-    url = message.text.strip()
-    bot.send_message(message.chat.id, "🔗 Processing YouTube link...")
-    try:
-        send_youtube_qualities(message.chat.id, url)
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Error:\n`{e}`", parse_mode="Markdown")
+# 🔗 YouTube Link Handler
+@bot.message_handler(func=lambda m: "youtu.be/" in m.text or "youtube.com/watch" in m.text)
+def handle_youtube_link(m):
+    bot.send_message(m.chat.id, "🔗 Processing YouTube link...")
+    send_youtube_qualities(m.chat.id, m.text.strip())
 
-# 🕹 DEFAULT HANDLER
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.send_message(message.chat.id, "👋 Welcome! Send a YouTube or Terabox link to download.")
+# 🧭 Start + Default Handlers
+@bot.message_handler(commands=["start"])
+def start(m):
+    bot.send_message(m.chat.id, "👋 Send a YouTube or Terabox link to start downloading.")
 
 @bot.message_handler(func=lambda m: True)
-def fallback(message):
-    if "instagram.com" in message.text or "twitter.com" in message.text:
-        bot.send_message(message.chat.id, "⚙️ Instagram/Twitter downloading is working fine.")
+def fallback(m):
+    if "instagram.com" in m.text or "twitter.com" in m.text:
+        bot.send_message(m.chat.id, "✅ Insta/Twitter downloader working fine.")
     else:
-        bot.send_message(message.chat.id, "❗ Unsupported link. Please send a YouTube or Terabox link.")
+        bot.send_message(m.chat.id, "⚠️ Unsupported link. Try YouTube or Terabox.")
 
-# ▶️ Start the bot
+# 🚀 Start Bot
 print("🤖 Bot is running...")
 bot.infinity_polling()
