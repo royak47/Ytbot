@@ -1,4 +1,5 @@
 import os
+from yt_dlp import YoutubeDL
 import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -21,65 +22,36 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data['url'] = url
 
-    if any(site in url for site in YOUTUBE_SITES):
-        await update.message.reply_text(
-            "🔍 Getting YouTube formats...",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎬 Choose Quality", callback_data="list_youtube")]
-            ])
-        )
+    if any(site in url for site in ["youtube.com", "youtu.be"]):
+        await update.message.reply_text("⏬ Downloading best quality YouTube video... Please wait.")
+        await download_youtube_direct(update, url)
     else:
         await update.message.reply_text("⏬ Downloading... Please wait.")
         await direct_download(update, url)
 
-async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    url = context.user_data.get("url")
-
-    if not url:
-        await query.edit_message_text("❌ Error: No URL found. Please send a valid YouTube link again.")
-        return
-
-    await query.edit_message_text("🔍 Fetching YouTube formats...")
-
+async def download_youtube_direct(update: Update, url: str):
     try:
         ydl_opts = {
             'quiet': True,
-            'skip_download': True,
-            'cookiefile': 'cookies.txt',
+            'cookiefile': 'cookies.txt',  # ensure this file is present
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',  # best mp4
+            'outtmpl': 'downloads/%(title)s.%(ext)s',
+            'merge_output_format': 'mp4',
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            formats = info.get("formats", [])
+        os.makedirs("downloads", exist_ok=True)
 
-        buttons = []
-        seen = set()
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
 
-        for f in formats:
-            fid = f.get("format_id")
-            height = f.get("height")
-            ext = f.get("ext")
-            acodec = f.get("acodec")
-            filesize = f.get("filesize") or 0
+        await update.message.reply_video(video=open(filename, 'rb'))
 
-            if height and acodec != "none" and ext in ["mp4", "webm"]:
-                label = f"{height}p ({round(filesize / 1024 / 1024)} MB)" if filesize else f"{height}p"
-                if label not in seen:
-                    seen.add(label)
-                    buttons.append([InlineKeyboardButton(label, callback_data=f"yt_dl:{fid}")])
-
-        if not buttons:
-            await query.edit_message_text("❌ No downloadable formats found.")
-            return
-
-        buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
-        await query.edit_message_text("🎯 Choose quality:", reply_markup=InlineKeyboardMarkup(buttons))
+        # Clean up
+        os.remove(filename)
 
     except Exception as e:
-        await query.edit_message_text(f"❌ Error: {str(e)}")
+        await update.message.reply_text(f"❌ Error downloading YouTube video:\n{str(e)}")
         
 async def handle_format_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
