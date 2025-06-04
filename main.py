@@ -30,39 +30,44 @@ async def list_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     format_type = query.data
     context.user_data[TYPE_KEY] = format_type
 
-    ydl_opts = {'quiet': True, 'skip_download': True}
+    ydl_opts = {'quiet': True, 'skip_download': True, 'noplaylist': True}
     buttons = []
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            for f in info.get("formats", []):
-                # 🎵 Audio
-                if format_type == "audio" and f.get("vcodec") == "none":
-                    abr = f.get("abr", 0)
-                    if abr >= MIN_AUDIO_KBPS:
-                        label = f"{abr}kbps MP3"
-                        buttons.append((abr, InlineKeyboardButton(label, callback_data=f"download:{f['format_id']}")))
+            formats = info.get("formats", [])
 
-                # 🎬 Video
-                elif format_type == "video" and f.get("vcodec") != "none":
-                    height = f.get("height", 0)
-                    if height in RESOLUTIONS and f.get("acodec") != "none":
-                        label = f"{height}p MP4"
-                        buttons.append((height, InlineKeyboardButton(label, callback_data=f"download:{f['format_id']}")))
+            for f in formats:
+                format_id = f.get("format_id")
+                ext = f.get("ext", "")
+                acodec = f.get("acodec", "")
+                vcodec = f.get("vcodec", "")
+                height = f.get("height", 0)
+                abr = int(f.get("abr", 0)) if f.get("abr") else 0
+
+                # 🎵 Audio only
+                if format_type == "audio" and vcodec == "none" and abr >= 128:
+                    label = f"{abr}kbps MP3"
+                    buttons.append((abr, InlineKeyboardButton(label, callback_data=f"download:{format_id}")))
+
+                # 🎬 Video with audio (progressive)
+                elif format_type == "video" and vcodec != "none" and acodec != "none" and height:
+                    label = f"{height}p MP4"
+                    buttons.append((height, InlineKeyboardButton(label, callback_data=f"download:{format_id}")))
+
     except Exception as e:
-        await query.edit_message_text("❌ Failed to fetch formats.")
+        await query.edit_message_text("❌ Failed to get formats.")
         return
 
     if not buttons:
-        await query.edit_message_text("❌ No matching formats found.")
+        await query.edit_message_text("❌ No available formats found.")
         return
 
-    # sort & display
+    # Sort formats by resolution or bitrate
     buttons.sort(key=lambda x: -x[0])
-    keyboard = [[b] for _, b in buttons[:20]]
-    await query.edit_message_text("📥 Choose quality:", reply_markup=InlineKeyboardMarkup(keyboard))
-
+    keyboard = [[btn] for _, btn in buttons]
+    await query.edit_message_text("📥 Select quality:", reply_markup=InlineKeyboardMarkup(keyboard))
 async def download_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
