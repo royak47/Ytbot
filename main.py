@@ -71,7 +71,7 @@ async def list_youtube_formats(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("🎯 Choose quality:", reply_markup=InlineKeyboardMarkup(buttons))
 
     except Exception as e:
-        await query.edit_message_text(f"❌ Error: {str(e)}"))
+        await query.edit_message_text(f"❌ Error: {str(e)}")
         
 async def handle_format_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
