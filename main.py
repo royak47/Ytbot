@@ -1,160 +1,109 @@
 import os
-import yt_dlp
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (ApplicationBuilder, CommandHandler, MessageHandler,
-                          CallbackQueryHandler, ContextTypes, filters)
+import requests
+import telebot
+from pytube import YouTube
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# 🔐 Replace this with your bot token
 BOT_TOKEN = "7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98"
-DOWNLOAD_DIR = "downloads"
 
-SUPPORTED_SITES = ['youtube.com', 'youtu.be']
+bot = telebot.TeleBot(BOT_TOKEN)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📥 Send any video link from YouTube, Instagram, Twitter or Terabox.")
+# ▶️ YOUTUBE: Send video qualities as buttons
+def send_youtube_qualities(chat_id, video_url):
+    yt = YouTube(video_url)
+    streams = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc()
 
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text.strip()
-    context.user_data['url'] = url
+    markup = InlineKeyboardMarkup()
+    for stream in streams:
+        size = round(stream.filesize / (1024 * 1024), 1)
+        text = f"{stream.resolution} ({size} MB)"
+        callback_data = f"yt_quality|{video_url}|{stream.itag}"
+        markup.add(InlineKeyboardButton(text, callback_data=callback_data))
 
-    if any(site in url for site in SUPPORTED_SITES):
-        buttons = [[
-            InlineKeyboardButton("🎵 Audio", callback_data="audio"),
-            InlineKeyboardButton("🎬 Video", callback_data="video")
-        ]]
-        await update.message.reply_text("Choose format:", reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        await update.message.reply_text("⏬ Downloading... Please wait.")
-        await direct_download(update, url)
+    bot.send_message(chat_id, "🎥 Select video quality to download:", reply_markup=markup)
 
-async def list_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    url = context.user_data.get("url")
-    format_type = query.data
-    context.user_data['type'] = format_type
-
-    await query.edit_message_text("🔍 Fetching available formats...")
-
+# ▶️ YOUTUBE: Download selected quality
+@bot.callback_query_handler(func=lambda call: call.data.startswith("yt_quality|"))
+def handle_youtube_quality(call):
     try:
-        with yt_dlp.YoutubeDL({'quiet': True, 'skip_download': True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-            formats = info.get("formats", [])
+        _, url, itag = call.data.split("|")
+        yt = YouTube(url)
+        stream = yt.streams.get_by_itag(itag)
 
-        buttons = []
-        seen = set()
+        msg = bot.send_message(call.message.chat.id, "📥 Downloading...")
+        file_path = stream.download()
 
-        for f in formats:
-            fid = f.get("format_id")
-            ext = f.get("ext", "")
-            height = f.get("height", 0)
-            abr = f.get("abr", 0)
-            vcodec = f.get("vcodec")
+        bot.send_chat_action(call.message.chat.id, 'upload_video')
+        with open(file_path, 'rb') as video:
+            bot.send_video(call.message.chat.id, video, supports_streaming=True)
 
-            if format_type == "audio" and vcodec == "none" and abr and abr >= 128:
-                label = f"{int(abr)}kbps"
-                if label not in seen:
-                    seen.add(label)
-                    buttons.append([InlineKeyboardButton(label, callback_data=f"download:{fid}")])
-
-            elif format_type == "video" and vcodec != "none" and height and ext in ["mp4", "webm"]:
-                if height not in seen:
-                    seen.add(height)
-                    label = f"{height}p"
-                    buttons.append([InlineKeyboardButton(label, callback_data=f"download:{fid}")])
-
-        if not buttons:
-            await query.edit_message_text("❌ No formats found.")
-            return
-
-        buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
-        await query.edit_message_text("🎯 Choose quality:", reply_markup=InlineKeyboardMarkup(buttons))
-
+        os.remove(file_path)
     except Exception as e:
-        await query.edit_message_text("❌ Error fetching formats.")
+        bot.send_message(call.message.chat.id, f"❌ Download failed:\n`{e}`", parse_mode="Markdown")
 
-async def download_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    if data == "back":
-        buttons = [[
-            InlineKeyboardButton("🎵 Audio", callback_data="audio"),
-            InlineKeyboardButton("🎬 Video", callback_data="video")
-        ]]
-        await query.edit_message_text("Choose format:", reply_markup=InlineKeyboardMarkup(buttons))
-        return
-
-    fid = data.split(":")[1]
-    url = context.user_data.get("url")
-    format_type = context.user_data.get("type")
-
-    await query.edit_message_text("⏬ Downloading selected format...")
-
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
-
-    filename = os.path.join(DOWNLOAD_DIR, f"{query.from_user.id}.{fid}.{ 'mp3' if format_type == 'audio' else 'mp4'}")
-
-    ydl_opts = {
-        'quiet': True,
-        'outtmpl': filename,
-        'format': f"{fid}+bestaudio/best" if format_type == "video" else fid,
-        'merge_output_format': 'mp4' if format_type == 'video' else 'mp3',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }] if format_type == 'audio' else [],
-    }
-
+# 📁 TERABOX: Get direct download link from unofficial API
+def get_terabox_direct_link(shared_url):
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-    except Exception:
-        await query.edit_message_text("❌ Download failed. Try another format.")
-        return
-
-    await query.edit_message_text("📤 Uploading...")
-
-    try:
-        with open(filename, 'rb') as f:
-            if format_type == "audio":
-                await query.message.reply_audio(f)
-            else:
-                await query.message.reply_video(f)
+        api_url = "https://api.tbxdrive.net/api/download"
+        params = {"url": shared_url}
+        res = requests.get(api_url, params=params)
+        data = res.json()
+        if data.get("success") and data.get("download_url"):
+            return data["download_url"]
+        return None
     except:
-        await query.message.reply_text("❌ Upload failed. File too large?")
+        return None
 
-    os.remove(filename)
+# 📥 TERABOX: Handle download
+@bot.message_handler(func=lambda message: "terabox.app" in message.text)
+def handle_terabox(message):
+    link = message.text.strip()
+    bot.send_message(message.chat.id, "🔍 Extracting Terabox file...")
 
-async def direct_download(update: Update, url: str):
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
-    filename = os.path.join(DOWNLOAD_DIR, f"{update.effective_user.id}.mp4")
+    direct_link = get_terabox_direct_link(link)
+    if not direct_link:
+        bot.send_message(message.chat.id, "❌ Failed to extract Terabox file. Link might be unsupported.")
+        return
 
-    opts = {
-        'quiet': True,
-        'outtmpl': filename,
-        'format': 'bestvideo+bestaudio/best',
-        'merge_output_format': 'mp4'
-    }
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
-        with open(filename, 'rb') as f:
-            await update.message.reply_video(f)
-    except Exception:
-        await update.message.reply_text("❌ Download failed.")
-    if os.path.exists(filename):
+        file_data = requests.get(direct_link, stream=True)
+        filename = direct_link.split("/")[-1].split("?")[0]
+        with open(filename, 'wb') as f:
+            for chunk in file_data.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+        bot.send_chat_action(message.chat.id, 'upload_document')
+        with open(filename, 'rb') as doc:
+            bot.send_document(message.chat.id, doc)
+
         os.remove(filename)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Download error:\n`{e}`", parse_mode="Markdown")
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-app.add_handler(CallbackQueryHandler(list_formats, pattern="^(audio|video)$"))
-app.add_handler(CallbackQueryHandler(download_format, pattern="^(download:|back)$"))
+# 🔗 YOUTUBE: Detect YouTube URL and show quality options
+@bot.message_handler(func=lambda message: "youtube.com/watch" in message.text or "youtu.be/" in message.text)
+def handle_youtube(message):
+    url = message.text.strip()
+    bot.send_message(message.chat.id, "🔗 Processing YouTube link...")
+    try:
+        send_youtube_qualities(message.chat.id, url)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error:\n`{e}`", parse_mode="Markdown")
 
-print("✅ Bot is running...")
-app.run_polling()
+# 🕹 DEFAULT HANDLER
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, "👋 Welcome! Send a YouTube or Terabox link to download.")
+
+@bot.message_handler(func=lambda m: True)
+def fallback(message):
+    if "instagram.com" in message.text or "twitter.com" in message.text:
+        bot.send_message(message.chat.id, "⚙️ Instagram/Twitter downloading is working fine.")
+    else:
+        bot.send_message(message.chat.id, "❗ Unsupported link. Please send a YouTube or Terabox link.")
+
+# ▶️ Start the bot
+print("🤖 Bot is running...")
+bot.infinity_polling()
