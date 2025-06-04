@@ -120,7 +120,8 @@ async def direct_download(update: Update, url: str):
         'quiet': True,
         'outtmpl': filename,
         'format': 'bestvideo+bestaudio/best',
-        'merge_output_format': 'mp4'
+        'merge_output_format': 'mp4',
+        'cookiefile': 'cookies.txt'
     }
 
     try:
