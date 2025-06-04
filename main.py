@@ -8,11 +8,9 @@ DOWNLOAD_DIR = "downloads"
 URL_KEY = "url"
 TYPE_KEY = "type"
 
-# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔗 Send any YouTube, Instagram, or Twitter video link.")
 
-# Handle user link message
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     context.user_data[URL_KEY] = url
@@ -20,9 +18,8 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🎵 Audio", callback_data="audio"),
          InlineKeyboardButton("🎬 Video", callback_data="video")]
     ]
-    await update.message.reply_text("Choose what to download:", reply_markup=InlineKeyboardMarkup(buttons))
+    await update.message.reply_text("Choose format type:", reply_markup=InlineKeyboardMarkup(buttons))
 
-# Show available formats
 async def list_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -44,6 +41,7 @@ async def list_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             vcodec = f.get("vcodec")
             height = f.get("height", 0)
             abr = f.get("abr", 0)
+            fps = f.get("fps", 0)
 
             if format_type == "audio":
                 if vcodec == "none" and abr and abr >= 128:
@@ -51,26 +49,39 @@ async def list_formats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     buttons.append((abr, InlineKeyboardButton(label, callback_data=f"download:{fid}")))
 
             elif format_type == "video":
-                if vcodec != "none" and acodec != "none" and height and ext == "mp4":
+                if vcodec != "none" and height and ext in ["mp4", "webm"]:
                     label = f"{height}p"
+                    if fps:
+                        label += f" {int(fps)}fps"
                     buttons.append((height, InlineKeyboardButton(label, callback_data=f"download:{fid}")))
 
         if not buttons:
             await query.edit_message_text("❌ No matching formats found.")
             return
 
-        buttons.sort(key=lambda x: -x[0])  # sort high to low
+        buttons.sort(key=lambda x: -x[0])
         keyboard = [[btn] for _, btn in buttons]
+
+        # Add back button
+        keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
+
         await query.edit_message_text("📥 Select quality:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     except Exception as e:
         await query.edit_message_text("❌ Error: Could not extract formats.")
 
-# Download + upload media
 async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    if data == "back":
+        buttons = [
+            [InlineKeyboardButton("🎵 Audio", callback_data="audio"),
+             InlineKeyboardButton("🎬 Video", callback_data="video")]
+        ]
+        await query.edit_message_text("Choose format type:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
 
     if data.startswith("download:"):
         format_id = data.split(":")[1]
@@ -86,7 +97,7 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ydl_opts = {
             'outtmpl': filename,
-            'format': format_id,
+            'format': f"{format_id}+bestaudio/best" if format_type == "video" else format_id,
             'quiet': True,
             'merge_output_format': 'mp4' if format_type == "video" else 'mp3',
             'postprocessors': [{
@@ -116,12 +127,12 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         os.remove(filename)
 
-# Build and run bot
+# Bot setup
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 app.add_handler(CallbackQueryHandler(list_formats, pattern="^(audio|video)$"))
-app.add_handler(CallbackQueryHandler(download_callback, pattern="^download:"))
+app.add_handler(CallbackQueryHandler(download_callback, pattern="^(download:|back)$"))
 
 print("✅ Bot is running...")
 app.run_polling()
