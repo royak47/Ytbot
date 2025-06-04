@@ -1,93 +1,83 @@
 import os
+import subprocess
 import requests
-from pytube import YouTube
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, Filters, CallbackQueryHandler
 
 BOT_TOKEN = "7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98"
-bot = telebot.TeleBot(BOT_TOKEN)
 
-# 📥 YouTube Quality Selection
-def send_youtube_qualities(chat_id, video_url):
-    try:
-        yt = YouTube(video_url)
-        streams = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc()
+# Start command
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("👋 Welcome to Media Downloader Bot!\n\n📥 Send a YouTube, Instagram, Twitter or Terabox link.")
 
-        markup = InlineKeyboardMarkup()
-        for stream in streams:
-            size_mb = round(stream.filesize / (1024 * 1024), 1)
-            btn_text = f"{stream.resolution} ({size_mb} MB)"
-            callback_data = f"yt|{stream.itag}|{video_url}"
-            markup.add(InlineKeyboardButton(btn_text, callback_data=callback_data))
+# Download handler
+def handle_link(update: Update, context: CallbackContext):
+    url = update.message.text.strip()
+    chat_id = update.message.chat_id
 
-        bot.send_message(chat_id, "🎞 Select a video quality:", reply_markup=markup)
-    except Exception as e:
-        bot.send_message(chat_id, f"❌ Error: {e}")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("yt|"))
-def download_selected_quality(call):
-    try:
-        _, itag, url = call.data.split("|")
-        yt = YouTube(url)
-        stream = yt.streams.get_by_itag(itag)
-
-        msg = bot.send_message(call.message.chat.id, "📥 Downloading video...")
-        file_path = stream.download()
-
-        bot.send_chat_action(call.message.chat.id, 'upload_video')
-        with open(file_path, 'rb') as vid:
-            bot.send_video(call.message.chat.id, vid, supports_streaming=True)
-        os.remove(file_path)
-    except Exception as e:
-        bot.send_message(call.message.chat.id, f"❌ Download failed: {e}")
-
-# 📦 Terabox Handler
-def get_terabox_direct_link(shared_url):
-    try:
-        r = requests.get("https://api.tbxdrive.net/api/download", params={"url": shared_url})
-        j = r.json()
-        return j["download_url"] if j.get("success") else None
-    except:
-        return None
-
-@bot.message_handler(func=lambda m: "terabox.app" in m.text)
-def handle_terabox(m):
-    bot.send_message(m.chat.id, "🔍 Extracting Terabox file...")
-    link = get_terabox_direct_link(m.text.strip())
-    if not link:
-        bot.send_message(m.chat.id, "❌ Terabox link not supported or failed to fetch.")
-        return
-    try:
-        filename = link.split("/")[-1].split("?")[0]
-        r = requests.get(link, stream=True)
-        with open(filename, "wb") as f:
-            for chunk in r.iter_content(1024 * 1024):
-                f.write(chunk)
-        bot.send_chat_action(m.chat.id, 'upload_document')
-        with open(filename, "rb") as doc:
-            bot.send_document(m.chat.id, doc)
-        os.remove(filename)
-    except Exception as e:
-        bot.send_message(m.chat.id, f"❌ Failed: {e}")
-
-# 🔗 YouTube Link Handler
-@bot.message_handler(func=lambda m: "youtu.be/" in m.text or "youtube.com/watch" in m.text)
-def handle_youtube_link(m):
-    bot.send_message(m.chat.id, "🔗 Processing YouTube link...")
-    send_youtube_qualities(m.chat.id, m.text.strip())
-
-# 🧭 Start + Default Handlers
-@bot.message_handler(commands=["start"])
-def start(m):
-    bot.send_message(m.chat.id, "👋 Send a YouTube or Terabox link to start downloading.")
-
-@bot.message_handler(func=lambda m: True)
-def fallback(m):
-    if "instagram.com" in m.text or "twitter.com" in m.text:
-        bot.send_message(m.chat.id, "✅ Insta/Twitter downloader working fine.")
+    # Check for YouTube separately
+    if "youtu" in url:
+        keyboard = [
+            [InlineKeyboardButton("🔽 Best Quality", callback_data=f"yt|{url}")],
+            [InlineKeyboardButton("🎵 MP3 (Audio)", callback_data=f"mp3|{url}")]
+        ]
+        update.message.reply_text("🎞 Select download type:", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        bot.send_message(m.chat.id, "⚠️ Unsupported link. Try YouTube or Terabox.")
+        update.message.reply_text("📥 Downloading...")
+        download_and_send(url, chat_id, context)
 
-# 🚀 Start Bot
-print("🤖 Bot is running...")
-bot.infinity_polling()
+# Button actions
+def button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+
+    action, url = query.data.split("|", 1)
+    chat_id = query.message.chat_id
+
+    if action == "yt":
+        query.edit_message_text("📥 Downloading best quality video...")
+        download_and_send(url, chat_id, context)
+    elif action == "mp3":
+        query.edit_message_text("🎵 Converting to MP3...")
+        download_and_send(url, chat_id, context, audio_only=True)
+
+# Main download function
+def download_and_send(url, chat_id, context, audio_only=False):
+    outname = "media.%(ext)s"
+    options = ["-o", outname, url]
+
+    if audio_only:
+        options = ["-x", "--audio-format", "mp3"] + options
+
+    try:
+        subprocess.run(["yt-dlp"] + options, check=True)
+
+        for f in os.listdir():
+            if f.startswith("media."):
+                with open(f, "rb") as media:
+                    if f.endswith(".mp3"):
+                        context.bot.send_audio(chat_id=chat_id, audio=media)
+                    elif f.endswith((".mp4", ".mkv", ".webm")):
+                        context.bot.send_video(chat_id=chat_id, video=media, supports_streaming=True)
+                    else:
+                        context.bot.send_document(chat_id=chat_id, document=media)
+                os.remove(f)
+                return
+
+        context.bot.send_message(chat_id, "❌ Download failed: File not found.")
+    except subprocess.CalledProcessError as e:
+        context.bot.send_message(chat_id, f"❌ Error during download: {str(e)}")
+
+def main():
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_link))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main()
