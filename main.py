@@ -7,7 +7,7 @@ from telegram.ext import (
 )
 import pytz
 
-BOT_TOKEN = "7955106935:AAFmZbGBsaGWErQXnF4W-YJw4bqwj0Zue98"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 DOWNLOAD_DIR = "downloads"
 
 YOUTUBE_SITES = ['youtube.com', 'youtu.be']
